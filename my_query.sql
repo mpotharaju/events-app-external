@@ -1,1 +1,1 @@
-select 1
+bq load --ignore_unknown_values=true --source_format=ORC Test.TestOrcLoad_Cloudbuild  "gs://mukta-poc-sqlserver/Input/ncvdc62_fnv2_ev_usa_sec_hte_ext/cvdc62_partition_month_x=2021-04/000008_0","gs://mukta-poc-sqlserver/Input/ncvdc62_fnv2_ev_usa_sec_hte_ext/cvdc62_partition_month_x=2021-04/000015_0"
