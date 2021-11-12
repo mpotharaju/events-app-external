@@ -1,5 +1,2 @@
-pip install --upgrade google-api-python-client
-pip install google-cloud
-pip install google-cloud-vision
-pip install google.cloud.bigquery
-pip install google.cloud.storage
+google-cloud-bigquery==2.30.1
+google-cloud-bigquery-storage==2.10.0
