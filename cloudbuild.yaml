@@ -1,0 +1,30 @@
+steps:
+
+  - name: python
+
+    args:
+
+      - install
+
+      - '-r'
+
+      - requirements.txt
+
+      - '--user'
+
+    entrypoint: pip
+
+  - name: python
+
+    args:
+
+      - bq_historical_load.py
+
+      - test.trig
+      - $_CONFIG_PROJECTNAME
+
+      - $_CONFIG_DATASET
+
+      - $_CONFIG_URI
+
+    entrypoint: python
