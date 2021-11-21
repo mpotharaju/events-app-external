@@ -14,3 +14,4 @@ steps:
       - config/dev/Historical_Load_config.json
       - $_CONFIG_DATASET
     entrypoint: python
+logsBucket: 'gs://komal-historical-load/'
