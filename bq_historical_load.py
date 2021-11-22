@@ -45,14 +45,14 @@ print('Argument List: ', str(sys.argv))
 if(len(sys.argv) == 5):
     triggerFileLocation = sys.argv[1]
     bqProject = sys.argv[2]
-    historicalLoadConfigFileUri = sys.argv[3]
+    historicalLoadConfigFileLocation = sys.argv[3]
     datasetName = sys.argv[4]
 else:
     raise Exception("Number of arguments should be 5")
 
 print('Trigger file name: ', triggerFileLocation)
 print('BQ ProjectName: ', bqProject)
-print('HistoricalLoad ConfigFile: ', historicalLoadConfigFileUri)
+print('HistoricalLoad ConfigFile: ', historicalLoadConfigFileLocation)
 print('historicalLoad Dataset: ', datasetName)
 
 # Construct a BigQuery client object.
@@ -70,21 +70,25 @@ configFileTable = datasetName+'.'+configFileTableNamePart
 print('Config file table name: ',configFileTable)
 
 # Create the load job config and load the table into BQ
-configFile = open(historicalLoadConfigFileUri, 'rb')
-loadconfig = bigquery.LoadJobConfig(
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                autodetect=True)
-config_job = client.load_table_from_file(configFile, configFileTable,
-                    job_config=loadconfig)  
-print('Starting job {}'.format(config_job.job_id))    
-config_job.result()                
-configFile.close()
+my_file_config = Path(historicalLoadConfigFileLocation)
+if my_file_config.is_file():
+    configFile = open(historicalLoadConfigFileLocation, 'rb')
+    loadconfig = bigquery.LoadJobConfig(
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    autodetect=True)
+    config_job = client.load_table_from_file(configFile, configFileTable,
+                        job_config=loadconfig)  
+    print('Starting job {}'.format(config_job.job_id))    
+    config_job.result()                
+    configFile.close()
+else:
+    raise Exception(historicalLoadConfigFileLocation + ' ' + 'not found')
 #######################################################
 # Query the config table for the current run properties
 #######################################################
 totalNewRowsAdded = 0
-my_file = Path(triggerFileLocation)
-if my_file.is_file():
+my_file_trigger = Path(triggerFileLocation)
+if my_file_trigger.is_file():
     triggerFile = open(triggerFileLocation, 'r')
     Lines = triggerFile.readlines()
     print(Lines)
