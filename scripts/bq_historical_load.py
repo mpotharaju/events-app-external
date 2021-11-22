@@ -48,7 +48,7 @@ if(len(sys.argv) == 5):
     historicalLoadConfigFileLocation = sys.argv[3]
     datasetName = sys.argv[4]
 else:
-    raise Exception("Number of arguments should be 5")
+    raise Exception("Error: Number of arguments should be 5\nUsage: bq_historical_load.py <trigger-file-location> <project-name> <config-file-location> <datasetname>")
 
 print('Trigger file name: ', triggerFileLocation)
 print('BQ ProjectName: ', bqProject)
@@ -67,7 +67,7 @@ print("Client created using project: {}".format(client.project))
 jobUuid = str(uuid.uuid4().int)
 configFileTableNamePart = 'HistoricalLoad_config_'+jobUuid
 configFileTable = datasetName+'.'+configFileTableNamePart
-print('Config file table name: ',configFileTable)
+
 
 # Create the load job config and load the table into BQ
 my_file_config = Path(historicalLoadConfigFileLocation)
@@ -91,13 +91,12 @@ my_file_trigger = Path(triggerFileLocation)
 if my_file_trigger.is_file():
     triggerFile = open(triggerFileLocation, 'r')
     Lines = triggerFile.readlines()
-    print(Lines)
     for line in Lines:
         tableInfoStr = line.strip().split(';')
-        print('tableStr: ',tableInfoStr)
+        #print('tableStr: ',tableInfoStr)
         tableToLoad = tableInfoStr[0]
         partitionFolder = tableInfoStr[1]
-        print('partitionFolder: ',partitionFolder)
+        #print('partitionFolder: ',partitionFolder)
         query = 'SELECT * FROM '+configFileTable+' where JobID = @job_id and Active = @activeFlag ';
         #print('Query is ',query);
 
@@ -127,7 +126,6 @@ if my_file_trigger.is_file():
         print('relativeFilesPath: ', relativeFilesPath)
         getDataset = client.dataset(dataSet)
         tableBeforeQuery = client.get_table(getDataset.table(tableToLoad))
-        print('Total number of rows in table before executing the query: ', tableBeforeQuery.num_rows)
 
         # Configure the external data source and query job.
         try:
@@ -152,8 +150,7 @@ if my_file_trigger.is_file():
             
             tableAfterQuery = client.get_table(getDataset.table(tableToLoad))
             newRowsAdded = tableAfterQuery.num_rows - tableBeforeQuery.num_rows
-            print('Total number of rows in table after executing the query: ', tableAfterQuery.num_rows)
-            print('Rows added for partition:', newRowsAdded)
+            print('Partition name: ',partitionFolder +'\n'+ 'Number of rows added for the partition: ' ,newRowsAdded)
             totalNewRowsAdded = totalNewRowsAdded +newRowsAdded
             
             
