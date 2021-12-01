@@ -19,17 +19,29 @@
 import sys
 import uuid
 import fnmatch
+import json
+import io
+import os
 from google.cloud import bigquery
 from google.cloud import storage 
 from pathlib import Path 
 
-def moveFile(bucket_from, bucket_to, files_path):
+def moveFile(sourceUri, targetUri):
     storage_client = storage.Client()
-    source_bucket = storage_client.bucket(bucket_from)
-    target_bucket = storage_client.bucket(bucket_to)
-    #print('source_bucket: ', source_bucket)
-    blobs = source_bucket.list_blobs(prefix = files_path, delimiter = '/') 
+    source_bucket_name = sourceUri.replace('gs://', '').split('/')
+    print('source_bucket_name: ', source_bucket_name[0])
+    target_bucket_name = targetUri.replace('gs://', '').split('/')
+    source_bucket = storage_client.bucket(source_bucket_name[0])
+    target_bucket = storage_client.bucket(target_bucket_name[0])
+    print('source_bucket: ', source_bucket)
+    print('target_bucket: ', target_bucket)
 
+    pathArray = sourceUri.replace('*', '').replace('gs://', '').split('/')
+    print('pathArray: ', pathArray)
+    files_path = '/'.join(pathArray[1:])
+    print('files_path: ', files_path)
+    #blobs = source_bucket.list_blobs(prefix = files_path, delimiter = '/')
+    blobs = source_bucket.list_blobs(prefix = files_path) 
     for blob in blobs:
         #print('blob is: ', blob.name)
         #print('files_path: ', files_path)
@@ -41,137 +53,105 @@ def moveFile(bucket_from, bucket_to, files_path):
 print('Number of arguments: ', len(sys.argv), 'arguments.')
 print('Argument List: ', str(sys.argv))
 
-# TODO: Error if argument count mis-match
-if(len(sys.argv) == 5):
-    triggerFileLocation = sys.argv[1]
-    bqProject = sys.argv[2]
-    historicalLoadConfigFileLocation = sys.argv[3]
-    datasetName = sys.argv[4]
+#todo: Error if argument count mis-match
+if(len(sys.argv) == 2):
+    jsonFile = sys.argv[1]
+  #  bqProject = sys.argv[2]
+   # historicalLoadConfigFileLocation = sys.argv[3]
+   # datasetName = sys.argv[4]
+##   raise Exception("Error: Number of arguments should be 5\nUsage: bq_historical_load.py <trigger-file-location> <project-name> <config-file-location> <datasetname>")
 else:
-    raise Exception("Error: Number of arguments should be 5\nUsage: bq_historical_load.py <trigger-file-location> <project-name> <config-file-location> <datasetname>")
+    raise Exception("Error: Number of arguments should be 2\nUsage: bq_historical_load.py <json-file-location>")
 
-print('Trigger file name: ', triggerFileLocation)
-print('BQ ProjectName: ', bqProject)
-print('HistoricalLoad ConfigFile: ', historicalLoadConfigFileLocation)
-print('historicalLoad Dataset: ', datasetName)
+print('Json file location: ', jsonFile)
+# TOdo: throw error if file doesnt exist or not readable
+my_file_config = Path(jsonFile)
+if my_file_config.is_file():
+    configFile = open(jsonFile)
+    jsonData = json.load(configFile)
+    sourceUris = jsonData['sourceUris']
+    bqProject = jsonData['target']['projectId']
+    datasetName = jsonData['target']['dataset']
+    tableName = jsonData['target']['table']
+    processedBucketUri = jsonData['processedBucket']
+    print('Source URI: ', jsonData['sourceUris'])
+    print('BQ ProjectID: ', jsonData['target']['projectId'])
+    print('historicalLoad Dataset: ', datasetName)
+    print('Table: ', tableName)
+    print('processedBucketUri: ', processedBucketUri)
+    configFile.close()
+else:
+   raise Exception(jsonFile + ' ' + 'not found')
 
 # Construct a BigQuery client object.
 client = bigquery.Client(project=bqProject)
 print("Client created using project: {}".format(client.project))
-
-##################################################
-# Read the config file and load it into a BQ table
-##################################################
-
-# Generate a unique name for the configFileTable
-jobUuid = str(uuid.uuid4().int)
-configFileTableNamePart = 'HistoricalLoad_config_'+jobUuid
-configFileTable = datasetName+'.'+configFileTableNamePart
-
-
-# Create the load job config and load the table into BQ
-my_file_config = Path(historicalLoadConfigFileLocation)
-if my_file_config.is_file():
-    configFile = open(historicalLoadConfigFileLocation, 'rb')
-    loadconfig = bigquery.LoadJobConfig(
-                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                    autodetect=True)
-    config_job = client.load_table_from_file(configFile, configFileTable,
-                        job_config=loadconfig)  
-    print('Starting job {}'.format(config_job.job_id))    
-    config_job.result()                
-    configFile.close()
+getDataset = client.dataset(datasetName)
+ 
+#Read insert query from file
+configPath = Path(jsonFile).parent.resolve()
+print('rootPath is: ', str(configPath))
+mySqlFile = Path(os.path.join(configPath, tableName+'.sql'))
+print('mySqlFile is: ', str(mySqlFile))
+insertQuery = ''
+if mySqlFile.is_file():
+    sqlQueryFile = open(mySqlFile, 'r')
+    insertQuery = sqlQueryFile.read()
+    sqlQueryFile.close()
 else:
-    raise Exception(historicalLoadConfigFileLocation + ' ' + 'not found')
-#######################################################
-# Query the config table for the current run properties
-#######################################################
+    raise Exception(str(mySqlFile) + ' ' + 'not found')
+
 totalNewRowsAdded = 0
-my_file_trigger = Path(triggerFileLocation)
-if my_file_trigger.is_file():
-    triggerFile = open(triggerFileLocation, 'r')
-    Lines = triggerFile.readlines()
-    for line in Lines:
-        tableInfoStr = line.strip().split(';')
-        #print('tableStr: ',tableInfoStr)
-        tableToLoad = tableInfoStr[0]
-        partitionFolder = tableInfoStr[1]
-        #print('partitionFolder: ',partitionFolder)
-        query = 'SELECT * FROM '+configFileTable+' where JobID = @job_id and Active = @activeFlag ';
-        #print('Query is ',query);
 
-        query_config = bigquery.QueryJobConfig(query_parameters=[
-                            bigquery.ScalarQueryParameter('job_id', 'STRING', tableToLoad),
-                            bigquery.ScalarQueryParameter('activeFlag', 'BOOL', 'true')
-                        ], use_legacy_sql=False)
-        queryResult = client.query(query, job_config=query_config)
-        for row in queryResult:
-            #print('Config is: ',row)
-            dataSet = row.DataSet
-            dataFilePath = row.DataFilePath
-            insertQuery = row.InsertQuery
-            sourceFormat = row.SourceFormat
-            sourceBucket = row.SourceBucket
-            processedBucket = row.ProcessedBucket
-            errorBucket = row.ErrorBucket
-            archiveFiles = row.ArchiveFiles
-            active = row.Active
+for uri in sourceUris:
+    print('sourceUri: ',uri)
+    tableBeforeQuery = client.get_table(getDataset.table(tableName))
+    #print('Total number of rows before query:', tableBeforeQuery.num_rows)
+    try:
+                print('URI is: ',uri)
+                external_config = bigquery.ExternalConfig('ORC')
+                external_config.source_uris = [
+                    uri
+                ]
+                table_id = "TestOrcExt"
+                job_config = bigquery.QueryJobConfig(table_definitions={table_id: external_config})
 
-        # Fetch the location of the data files (excluding the source bucket name)
-        # Eg: dataFilePath = 'gs://<bucket-name>/Input/ncvdc62_fnv2_ev_usa_sec_hte_ext_bad/'
-        #     relativeFilesPath should be set to Input/ncvdc62_fnv2_ev_usa_sec_hte_ext_bad/
-        completePath = dataFilePath+partitionFolder+'/'
-        pathArray = completePath.replace('gs://', '').split('/')
-        relativeFilesPath = '/'.join(pathArray[1:])
-        print('relativeFilesPath: ', relativeFilesPath)
-        getDataset = client.dataset(dataSet)
-        tableBeforeQuery = client.get_table(getDataset.table(tableToLoad))
+                # Replace the source table name and the target table name
+                insertQuery = insertQuery.replace('EXTERNAL_TABLE', table_id)
+                insertQuery = insertQuery.replace('TARGET_TABLE', datasetName+'.'+tableName)
+                #print('Insert Query is: ',insertQuery)
 
-        # Configure the external data source and query job.
-        try:
-            uri = dataFilePath+partitionFolder+'/*'
-            print('URI is: ',uri)
-            external_config = bigquery.ExternalConfig(sourceFormat)
-            external_config.source_uris = [
-                uri
-            ]
-            table_id = "TestOrcExt"
-            job_config = bigquery.QueryJobConfig(table_definitions={table_id: external_config})
+                query_job = client.query(insertQuery, job_config=job_config)  # Make an API request.
 
-            # Replace the source table name and the target table name
-            insertQuery = insertQuery.replace('EXTERNAL_TABLE', table_id)
-            insertQuery = insertQuery.replace('TARGET_TABLE', dataSet+'.'+tableToLoad)
-            #print('Insert Query is: ',insertQuery)
-
-            query_job = client.query(insertQuery, job_config=job_config)  # Make an API request.
-
-            w_states = list(query_job)  # Wait for the job to complete.
-            print('Success: Data inserted into ', tableToLoad)
-            
-            tableAfterQuery = client.get_table(getDataset.table(tableToLoad))
-            newRowsAdded = tableAfterQuery.num_rows - tableBeforeQuery.num_rows
-            print('Partition name: ',partitionFolder +'\n'+ 'Number of rows added for the partition: ' ,newRowsAdded)
-            totalNewRowsAdded = totalNewRowsAdded +newRowsAdded
-            
-            
-            if (archiveFiles):
-                print('Moving the files to processed bucket: ', processedBucket, ', Path: ', relativeFilesPath)
-                moveFile(sourceBucket, processedBucket, relativeFilesPath)
-        except Exception as e:
-            print('Error: ', e)
-            if (archiveFiles):
-                print('Moving the files to error bucket: ', errorBucket, ', Path: ', relativeFilesPath)
-                moveFile(sourceBucket, errorBucket, relativeFilesPath)
-    triggerFile.close()
-else:
-    raise Exception(triggerFileLocation + ' ' + 'not found')
+                w_states = list(query_job)  # Wait for the job to complete.
+                print('Success: Data inserted into ', tableName)
+                
+                tableAfterQuery = client.get_table(getDataset.table(tableName))
+                #print('Total number of rows after query:', tableAfterQuery.num_rows)
+                newRowsAdded = tableAfterQuery.num_rows - tableBeforeQuery.num_rows
+                print('Source URI: ',uri +'\n'+ 'Number of rows added for the uri: ' ,newRowsAdded)
+                totalNewRowsAdded = totalNewRowsAdded +newRowsAdded
+                
+                #if (archiveFiles):
+                    # sourceUri=gs://<bucket>/Input/<Tablename>/*
+                    # sourceFile=gs://<bucket>/Input/<Tablename>/<partition1>/file1, gs://<bucket>/Input/<Tablename>/<partition1>/file2,
+                    #           gs://<bucket>/Input/<Tablename>/<partition2>/file1
+                    # destination folder=gs://<processedBucket>/Input/<Tablename>/<partition1>/file1, gs://<processedBucket>/Input/<Tablename>/<partition1>/file2,
+                    #           gs://<processedBucket>/Input/<Tablename>/<partition2>/file1
+                #print('Moving the files to processed bucket: ', processedBucket, ', Path: ', relativeFilesPath)
+                #archiveFiles = ''
+                #if (archiveFiles):
+                moveFile(uri, processedBucketUri)
+    except Exception as e:
+                print('Error: ', e)
+                #if (archiveFiles):
+                # print('Moving the files to error bucket: ', errorBucket, ', Path: ', relativeFilesPath)
+                    #moveFile(sourceBucket, errorBucket, relativeFilesPath)
+        #triggerFile.close()
+    #else:
+        #raise Exception(triggerFileLocation + ' ' + 'not found')
 
 print('Total number of new rows added in table:', totalNewRowsAdded)
-
-### Delete the temp config table
-client.delete_table(configFileTable, not_found_ok=True)
-
-
 
 
 
